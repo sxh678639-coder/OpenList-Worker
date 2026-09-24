@@ -78,6 +78,17 @@ function replaceDist(src) {
   console.log(`  Copying frontend dist: ${src} -> ${DEST}`)
   fs.rmSync(DEST, { recursive: true, force: true })
   fs.cpSync(src, DEST, { recursive: true })
+  // Cloudflare Workers 静态资源默认返回 max-age=0 缓存头，浏览器每次访问
+  // 都要对全部 JS/CSS 发起重新验证。把 _headers 模板复制进 dist，让
+  // /assets/* 走 immutable 永久缓存（文件名带内容哈希，安全），HTML 入口
+  // 保持 no-cache。参考：https://developers.cloudflare.com/workers/static-assets/headers/
+  const headersTemplate = path.join(__dirname, "assets-headers.txt")
+  if (fs.existsSync(headersTemplate)) {
+    fs.copyFileSync(headersTemplate, path.join(DEST, "_headers"))
+    console.log("✓ Copied _headers (immutable cache for /assets/*)")
+  } else {
+    console.warn("  [fetch-frontend] assets-headers.txt missing, _headers not copied")
+  }
   console.log(`✓ Frontend dist ready (${DEST})`)
 }
 
