@@ -136,12 +136,27 @@ app.all("*", async (c) => {
         headers.set("Cache-Control", "no-cache, must-revalidate")
         return new Response(res.body, { status: res.status, headers })
       }
+      // 构建产物（/assets/*.js|css 等）文件名带内容哈希，内容不变则文件名不变，
+      // 可安全永久缓存。Cloudflare Workers 静态资源绑定默认返回
+      // "public, max-age=0, must-revalidate"，导致浏览器每次访问都要对约 10 个
+      // 资源逐一发起重新验证请求，白白增加多次 RTT；改为 immutable 后，
+      // 二次访问这些资源直接命中浏览器缓存，零网络开销。
+      if (url.pathname.startsWith("/assets/")) {
+        const headers = new Headers(res.headers)
+        headers.set("Cache-Control", "public, max-age=31536000, immutable")
+        return new Response(res.body, { status: res.status, headers })
+      }
       return res
     }
     // SPA fallback: return index.html for non-asset routes (e.g. /login, /manage)
     // 注意：ASSETS.fetch 对 /index.html 也可能返回 307，直接 fetch "/" 获取实际 HTML
     const rootReq = new Request(`${url.origin}/`, c.req.raw)
-    return env.ASSETS.fetch(rootReq)
+    const rootRes = await env.ASSETS.fetch(rootReq)
+    // 兜底返回的同样是 HTML 入口，必须 no-cache，避免旧 HTML 被缓存
+    // 导致新版本部署后前端路由（/login 等）仍引用旧 hash 的 JS/CSS。
+    const headers = new Headers(rootRes.headers)
+    headers.set("Cache-Control", "no-cache, must-revalidate")
+    return new Response(rootRes.body, { status: rootRes.status, headers })
   }
   // EdgeOne 等 ASSETS 缺席的环境：直接返回构建期内联的 SPA 壳，
   // 避免前端路由（/add、/@manage/* 等）落到 404 文本导致整站不可达
